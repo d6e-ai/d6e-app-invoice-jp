@@ -63,7 +63,7 @@ function computeTotals(items, priceMode, roundingMethod) {
     const excluded = priceMode === 'tax_included' ? gross / (1 + tr) : gross;
     if (tr === 0.08) {
       rawEx8 += excluded;
-    } else if (tr === 0.1) {
+    } else {
       rawEx10 += excluded;
     }
   }
@@ -394,12 +394,13 @@ for (let i = 0; i < items.length; i++) {
   const tr = Number(it.tax_rate) || 0;
   const lineAmount = qty * up;
   const isReduced = tr === 0.08;
-  if (isReduced) {
-    hasReducedItem = true;
-  }
 
   if (cursorY - TABLE_ROW_HEIGHT < MARGIN.bottom + 180) {
     break;
+  }
+
+  if (isReduced) {
+    hasReducedItem = true;
   }
 
   // Alternate row background
@@ -618,8 +619,7 @@ drawText(
 
 // --- Output ----------------------------------------------------------------
 
-const pdfBytes = await pdfDoc.save();
-const base64 = btoa(pdfBytes);
+const base64 = await pdfDoc.saveAsBase64();
 const dateForName =
   typeof payload.transaction_date === 'string'
     ? payload.transaction_date.replace(/-/g, '')

@@ -65,6 +65,40 @@ function base64ToUint8Array(b64) {
   return out;
 }
 
+function getImageDimensions(bytes, fmt) {
+  if (fmt === 'png') {
+    if (bytes.length < 24) return null;
+    const w =
+      ((bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19]) >>> 0;
+    const h =
+      ((bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23]) >>> 0;
+    return w > 0 && h > 0 ? { width: w, height: h } : null;
+  }
+  if (fmt === 'jpg' || fmt === 'jpeg') {
+    let i = 2;
+    while (i + 8 < bytes.length) {
+      if (bytes[i] !== 0xff) return null;
+      const marker = bytes[i + 1];
+      if (
+        marker >= 0xc0 &&
+        marker <= 0xcf &&
+        marker !== 0xc4 &&
+        marker !== 0xc8 &&
+        marker !== 0xcc
+      ) {
+        const h = (bytes[i + 5] << 8) | bytes[i + 6];
+        const w = (bytes[i + 7] << 8) | bytes[i + 8];
+        return w > 0 && h > 0 ? { width: w, height: h } : null;
+      }
+      const segLength = (bytes[i + 2] << 8) | bytes[i + 3];
+      if (segLength < 2) return null;
+      i += 2 + segLength;
+    }
+    return null;
+  }
+  return null;
+}
+
 function computeTotals(items, priceMode, roundingMethod) {
   let rawEx8 = 0;
   let rawEx10 = 0;
@@ -76,7 +110,7 @@ function computeTotals(items, priceMode, roundingMethod) {
     const excluded = priceMode === 'tax_included' ? gross / (1 + tr) : gross;
     if (tr === 0.08) {
       rawEx8 += excluded;
-    } else if (tr === 0.1) {
+    } else {
       rawEx10 += excluded;
     }
   }
@@ -107,17 +141,6 @@ function makeRun(text, opts) {
     color: options.color || '222222',
     size: options.size || 20, // 10pt
     font: BASE_FONT,
-  });
-}
-
-function makeParagraph(text, opts) {
-  const options = opts || {};
-  return new Paragraph({
-    alignment: options.alignment || AlignmentType.LEFT,
-    spacing: options.spacing,
-    children: Array.isArray(text)
-      ? text
-      : [makeRun(text, options)],
   });
 }
 
@@ -236,6 +259,16 @@ if (
   try {
     const bytes = base64ToUint8Array(issuer.logo.data_base64);
     const fmt = (issuer.logo.format || 'png').toLowerCase();
+    const LOGO_MAX_W = 140;
+    const LOGO_MAX_H = 56;
+    const dims = getImageDimensions(bytes, fmt);
+    let drawW = LOGO_MAX_W;
+    let drawH = LOGO_MAX_H;
+    if (dims) {
+      const scale = Math.min(LOGO_MAX_W / dims.width, LOGO_MAX_H / dims.height, 1);
+      drawW = dims.width * scale;
+      drawH = dims.height * scale;
+    }
     children.push(
       new Paragraph({
         alignment: AlignmentType.RIGHT,
@@ -244,7 +277,7 @@ if (
           new ImageRun({
             type: fmt === 'jpeg' ? 'jpg' : fmt,
             data: bytes,
-            transformation: { width: 140, height: 56 },
+            transformation: { width: drawW, height: drawH },
             altText: {
               title: 'Issuer logo',
               description: 'Logo of the invoice issuer',
