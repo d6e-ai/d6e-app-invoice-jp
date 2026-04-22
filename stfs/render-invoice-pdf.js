@@ -121,7 +121,26 @@ function wrapText(text, font, fontSize, maxWidth) {
 
 // --- input and metadata ----------------------------------------------------
 
-const payload = $input || {};
+// The d6e JS runtime injects the caller-provided input as the `$input` global.
+// Accept both shapes for resilience:
+//   1. Direct payload ({ document_type, items, ... }) — produced by the
+//      generate-invoice-pdf workflow's input_mappings and by AI agents that
+//      already pass a flattened payload.
+//   2. Wrapped form ({ normalized_payload: { ... } }) — produced when an AI
+//      agent accidentally forwards the full `validate-qualified-invoice`
+//      result without unwrapping.
+// The unwrap below keeps the downstream code (which assumes a flat payload)
+// unchanged, and prevents the "PDF body is empty / totals are zero" failure
+// we hit in the v1.0.0 end-to-end test.
+let payload = $input && typeof $input === 'object' ? $input : {};
+if (
+  payload.normalized_payload &&
+  typeof payload.normalized_payload === 'object' &&
+  !Array.isArray(payload.normalized_payload)
+) {
+  payload = payload.normalized_payload;
+}
+
 const documentType = payload.document_type || 'qualified_invoice';
 
 const DOCUMENT_TYPE_META = {
@@ -628,10 +647,57 @@ drawText(
 // --- Output ----------------------------------------------------------------
 
 const base64 = await pdfDoc.saveAsBase64();
-const dateForName =
-  typeof payload.transaction_date === 'string'
-    ? payload.transaction_date.replace(/-/g, '')
-    : 'undated';
-const fileName = meta.filePrefix + '_' + dateForName + '.pdf';
+const fileName = meta.filePrefix + '_' + buildFileNameSuffix(payload) + '.pdf';
 
 return { file_data: base64, file_name: fileName };
+
+// Build the trailing part of the generated file name.
+// Priority: document_number (sanitized) > transaction_date > issue_date > 'undated'.
+// document_number wins because it is the most user-recognizable identifier and
+// is unique per invoice, matching how accounting teams file the paperwork.
+// transaction_date / issue_date are normalized to YYYYMMDD so the resulting
+// file name stays portable across filesystems.
+function buildFileNameSuffix(p) {
+  const fromDocNumber = sanitizeForFileName(p && p.document_number);
+  if (fromDocNumber) {
+    return fromDocNumber;
+  }
+  const fromTxDate = ymdCompact(p && p.transaction_date);
+  if (fromTxDate) {
+    return fromTxDate;
+  }
+  const fromIssueDate = ymdCompact(p && p.issue_date);
+  if (fromIssueDate) {
+    return fromIssueDate;
+  }
+  return 'undated';
+}
+
+function sanitizeForFileName(raw) {
+  if (typeof raw !== 'string') {
+    return '';
+  }
+  // Replace characters that are illegal on common filesystems (Windows, macOS,
+  // Linux) plus whitespace with underscores, collapse consecutive underscores,
+  // trim leading / trailing underscores, and cap the length to keep the final
+  // file name well below the typical 255-byte path limit once the prefix and
+  // extension are added.
+  const replaced = raw.replace(/[\\/:*?"<>|\s\x00-\x1f]/g, '_');
+  const collapsed = replaced.replace(/_+/g, '_');
+  const trimmed = collapsed.replace(/^_+|_+$/g, '');
+  if (trimmed.length === 0) {
+    return '';
+  }
+  return trimmed.length > 80 ? trimmed.slice(0, 80) : trimmed;
+}
+
+function ymdCompact(raw) {
+  if (typeof raw !== 'string') {
+    return '';
+  }
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return '';
+  }
+  return match[1] + match[2] + match[3];
+}
