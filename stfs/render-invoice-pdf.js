@@ -18,8 +18,16 @@ import { PDFDocument, rgb } from '@d6e-ai/pdf-lib';
 // --- helpers ---------------------------------------------------------------
 
 function formatNumber(n) {
-  const v = Math.round(Number(n) || 0);
-  return String(v).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const num = Number(n);
+  if (!Number.isFinite(num)) return '0';
+  // Cap to 4 decimal places so floating-point noise (0.1 + 0.2) does not
+  // leak into the rendered output, while still preserving intentional
+  // fractional quantities / unit prices that the validator accepts.
+  const rounded = Math.round(num * 10000) / 10000;
+  const str = String(rounded);
+  const [intPart, fracPart] = str.split('.');
+  const withCommas = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return fracPart ? withCommas + '.' + fracPart : withCommas;
 }
 
 // Accepts "YYYY-MM-DD" and renders it as "YYYY/MM/DD".
