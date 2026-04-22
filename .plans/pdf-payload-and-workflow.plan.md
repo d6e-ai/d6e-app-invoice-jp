@@ -28,15 +28,16 @@ d6e ランタイムの仕様を `packages/api/src/engine/runtime_js.rs` と
 - **`validate-qualified-invoice` の input_schema** を単一の権威定義とし、`render-invoice-pdf` / `render-invoice-docx` の input_schema にも同じ完全形スキーマをコピーして揃える。
   - 3 箇所のコピーを維持する必要があるので、各 STF の直上に `# Keep this schema in sync with validate-qualified-invoice.` というコメントを置いて、将来のズレを防ぐ。
   - `required` は validate と同じ `[document_type, transaction_date, issuer, items]` のまま。
-- **`workflows:` ブロックを追加**し、`generate-invoice-files` を定義する。
-  - step 0: `validate-qualified-invoice`。`input_mappings` で `$input.<field>` を各 target に 13 個マッピング（全必須 + 任意フィールド）。
-  - step 1: `render-invoice-pdf`。`input_mappings` で `$steps[0].normalized_payload.<field>` を各 target にマッピング。
-  - step 2: `render-invoice-docx`。同じマッピングをもう一度書く（ワークフロー step は順次実行だが、どちらを先にしても結果は同じ）。
-  - ワークフロー全体の戻り値は最後の step の出力になるため、この並びだと DOCX の `{file_data, file_name}` が返る。呼び出し元が両方欲しい場合は AI が `$steps[1].file_*` / `$steps[2].file_*` を利用する想定。ただし現在の d6e はワークフロー戻り値が last step のみなので、`template_prompt` 内で「ワークフロー実行後、step 1 と 2 の両方の file_data をユーザーに提示する」指示を明確化する。
+- **`workflows:` ブロックを追加**し、以下 2 本のワークフローを定義する。`d6e` の `execute_workflow` は最後の STF 出力のみを戻り値として返し、`binary-detection.ts` の `extractBinaryFromResult` も 1 つの `file_data` しか抽出できない。単一ワークフローで PDF と DOCX を同時に返すことは現状の API / UI では実現不可能。よって、**ユーザーが欲しい形式ごとに独立したワークフローを提供**し、AI がそれらを順次呼び分ける形にする。
+  - `generate-invoice-pdf`: validate-qualified-invoice → render-invoice-pdf（last step → PDF の `{file_data, file_name}` が戻り値）。
+  - `generate-invoice-docx`: validate-qualified-invoice → render-invoice-docx（last step → DOCX の `{file_data, file_name}` が戻り値）。
+  - 両ワークフローとも step 0 の `input_mappings` は `$input.<field>` を 13 個（全フィールド）。step 1 の `input_mappings` は `$steps[0].normalized_payload.<field>` を 13 個。
+  - validate が失敗（`$steps[0].valid === false`）した場合、render step にはエラー時の `normalized_payload: null` が渡るので、render STF 側で payload が空オブジェクトに近い状態になる。このケースは AI がワークフロー実行前に直接 validate を一度呼んでエラーを提示するのが理想。`template_prompt` で明示する。
 - **`template_prompt`** を以下のように書き換える。
-  - これまでの「validate を呼んで、normalized_payload を render に渡す」手続き指示を外し、**`generate-invoice-files` ワークフローを第一選択**とする。
-  - ワークフロー実行結果が `valid: false` の場合は validate step のエラーをユーザーに提示して再入力を依頼。
-  - 稀に片方だけ欲しい場合（PDF だけなど）のみ、STF を単体で呼ぶフォールバック手順を残す。
+  - これまでの「validate を呼んで、normalized_payload を render に渡す」手続き指示を外し、**ワークフロー呼び出しを第一選択**にする。
+  - 両方の形式（PDF + DOCX）が欲しい場合は **事前に `validate-qualified-invoice` を 1 回だけ単体実行** してエラーをユーザーに提示 → 問題なければ `generate-invoice-pdf` と `generate-invoice-docx` を**両方**呼ぶ、という流れを明示する。validate を単体で先に呼ぶことで、万が一エラーがあっても不要な PDF / DOCX 生成を回避でき、かつ2 本のワークフローで validate が二重に走ることのオーバーヘッドも「エラー無しが確認済み」なので許容できる範囲に収まる。
+  - PDF だけ（または DOCX だけ）欲しい場合は対応するワークフローを 1 本だけ呼ぶ。
+  - 直接 STF を手動で連結する呼び出し方はフォールバックとして残すが、第一推奨からは外す。
 
 ### 2. `stfs/render-invoice-pdf.js`
 
