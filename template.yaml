@@ -1,0 +1,232 @@
+name: invoice-jp
+namespace: d6e
+version: v1.0.0
+description:
+  ja-JP: インボイス制度対応の適格請求書・適格簡易請求書・適格返還請求書をPDFとWordで生成・検証するd6e App。
+  en-US: Generate and validate Japanese Qualified Invoice, Simplified Qualified Invoice, and Qualified Return Invoice in PDF and DOCX.
+
+template_prompt: |
+  あなたは日本の「インボイス制度（適格請求書等保存方式）」に精通した経理担当のアシスタントです。
+  ユーザーの依頼に基づいて、以下 3 種類の帳票のいずれかを生成・検証します。
+
+  - `qualified_invoice`（適格請求書）
+  - `simplified_invoice`（適格簡易請求書：小売・飲食・タクシー・駐車場・旅行・写真業など）
+  - `return_invoice`（適格返還請求書：値引き・返品・割戻しなどで対価を返還した場合）
+
+  ## 利用フローの判別
+
+  ユーザーの入力を見て、以下 3 つのモードのうち 1 つを選んでください。
+
+  1. JSON ペーストモード（主運用）
+     ユーザーの発言にコードブロックの JSON オブジェクトが含まれている、
+     または「この JSON で」「下のデータで作って」と明示された場合。
+     その場合、JSON を そのままの構造で `validate-qualified-invoice` の入力に渡してください。
+     不足項目や型不一致があった場合は、勝手に値を創作せず必ずユーザーに確認してください。
+  2. テンプレ要求モード
+     「雛形」「テンプレート」「入力フォーマット」「サンプル JSON」「どんな形で渡せば良い」
+     など、フォーマット照会の意図がある場合。
+     `invoice-input-template` ファイルの該当 `document_type` ブロック（指定が無ければ
+     `qualified_invoice`）を json コードブロックでユーザーに返し、
+     「この内容をあなたの情報で編集して貼り戻してください」と案内してください。
+  3. 対話フォールバックモード
+     JSON の貼り付けもテンプレ要求もなく、自然文で依頼された場合。
+     下記「収集すべき項目」を一問一答で聞き、すべて揃ったら JSON にまとめてから次のステップに進みます。
+
+  ## 収集すべき項目（対話フォールバック時の最小セット）
+
+  以下 6 項目は必須です（簡易インボイスは 7 を任意、返還インボイスは 8 を必須）。
+
+  1. 発行事業者の氏名・名称（`issuer.name`）
+  2. 登録番号 (`T` + 13 桁) （`issuer.registration_number`）
+  3. 取引年月日（`transaction_date`、`YYYY-MM-DD`）
+  4. 明細（`items[].description` / `quantity` / `unit_price`）
+  5. 適用税率（`items[].tax_rate` = `0.10` または `0.08`）
+  6. 受領事業者の氏名・名称（`recipient.name`）
+  7. （簡易の場合）6 は任意
+  8. （返還の場合）返還事由と元の請求書番号（`return_info.reason` / `return_info.original_document_number`）
+
+  任意項目: 会社ロゴ (`issuer.logo`)、支払期限・振込先 (`payment.*`)、備考 (`notes`)、
+  税抜／税込の別 (`price_mode`)、端数処理 (`rounding_method`)。
+
+  ## document_type の決め方
+
+  - 何も指定されなければ `qualified_invoice`
+  - 「レシート」「小売」「飲食店」「タクシー」「駐車場」「旅行」などの文脈なら `simplified_invoice`
+  - 「返品」「値引き」「割戻し」「返還」などが出たら `return_invoice`
+
+  ## STF 呼び出しの流れ
+
+  1. 入力が揃ったら、必ず最初に `validate-qualified-invoice` を呼んで記載要件を検証する。
+  2. 結果が `valid: false` なら、`errors[]` の内容をユーザーに日本語で提示し、修正を依頼して
+     もう一度最初から組み直す。勝手に値を補完して再実行してはいけない。
+  3. `valid: true` になったら、`validate-qualified-invoice` が返した `normalized_payload` を使って、
+     `render-invoice-pdf` と `render-invoice-docx` の両方を呼ぶ。ユーザーが明示的に片方だけを
+     希望した場合（「PDF だけで良い」など）のみ、指定された方だけを呼ぶ。
+  4. 生成された `file_data`（base64）と `file_name` は d6e の UI が自動的にダウンロードリンクとして
+     表示するので、AI 側で追加の説明は不要（ただし要約や次のアクションの提案は歓迎）。
+
+  ## 出力時のマナー
+
+  - ユーザーに向けた文章はすべて日本語で記述する。
+  - 金額は 3 桁区切りで表示する（例: ¥1,234,567）。
+  - 登録番号はチャット本文では `T1234567890123` のように省略せず、帳票上と同じ表記を用いる。
+  - 帳票上で軽減税率対象品目があれば `※` マークを付け、「※印は軽減税率対象」と脚注で明記する。
+  - インボイス制度や端数処理など制度面の質問は `invoice-requirements-guide` の内容を根拠に答える
+    （想像で答えない）。
+
+stfs:
+  - name: validate-qualified-invoice
+    runtime: js
+    description: Validates six mandatory fields, registration number format, and computes per-tax-rate totals for a qualified invoice payload.
+    source: stfs/validate-qualified-invoice.js
+    input_schema:
+      type: object
+      required:
+        - document_type
+        - transaction_date
+        - issuer
+        - items
+      properties:
+        document_type:
+          type: string
+          enum:
+            - qualified_invoice
+            - simplified_invoice
+            - return_invoice
+        document_number:
+          type: string
+        transaction_date:
+          type: string
+          pattern: "^\\d{4}-\\d{2}-\\d{2}$"
+        issue_date:
+          type: string
+          pattern: "^\\d{4}-\\d{2}-\\d{2}$"
+        issuer:
+          type: object
+          required:
+            - name
+            - registration_number
+          properties:
+            name:
+              type: string
+            registration_number:
+              type: string
+              pattern: "^T\\d{13}$"
+            address:
+              type: string
+            contact:
+              type: string
+            logo:
+              type:
+                - object
+                - "null"
+              properties:
+                format:
+                  type: string
+                  enum: [png, jpg, jpeg]
+                data_base64:
+                  type: string
+        recipient:
+          type: object
+          properties:
+            name:
+              type: string
+            address:
+              type: string
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required:
+              - description
+              - quantity
+              - unit_price
+              - tax_rate
+            properties:
+              description:
+                type: string
+              quantity:
+                type: number
+              unit_price:
+                type: number
+              tax_rate:
+                type: number
+                enum: [0.08, 0.10]
+        price_mode:
+          type: string
+          enum: [tax_excluded, tax_included]
+          default: tax_excluded
+        rounding_method:
+          type: string
+          enum: [floor, ceil, round]
+          default: floor
+        payment:
+          type: object
+          properties:
+            due_date:
+              type: string
+            bank_info:
+              type: string
+        notes:
+          type: string
+        return_info:
+          type: object
+          properties:
+            original_document_number:
+              type: string
+            return_date:
+              type: string
+            reason:
+              type: string
+
+  - name: render-invoice-pdf
+    runtime: js
+    description: Renders a validated invoice payload to an A4 PDF with embedded Japanese font. Returns base64 file_data and file_name.
+    source: stfs/render-invoice-pdf.js
+    input_schema:
+      type: object
+      required:
+        - document_type
+        - transaction_date
+        - issuer
+        - items
+      properties:
+        document_type:
+          type: string
+          enum:
+            - qualified_invoice
+            - simplified_invoice
+            - return_invoice
+
+  - name: render-invoice-docx
+    runtime: js
+    description: Renders a validated invoice payload to a Word (docx) document using MS Gothic. Returns base64 file_data and file_name.
+    source: stfs/render-invoice-docx.js
+    input_schema:
+      type: object
+      required:
+        - document_type
+        - transaction_date
+        - issuer
+        - items
+      properties:
+        document_type:
+          type: string
+          enum:
+            - qualified_invoice
+            - simplified_invoice
+            - return_invoice
+
+files:
+  - name: invoice-requirements-guide
+    description: Reference guide explaining the six mandatory fields, rounding rules, and use cases for each document type.
+    path: files/invoice-requirements-guide.md
+
+  - name: tax-rates
+    description: Master data of Japanese consumption tax rates (10 percent standard, 8 percent reduced).
+    path: files/tax-rates.json
+
+  - name: invoice-input-template
+    description: Copy-and-edit JSON input templates for the three document types, containing placeholder values.
+    path: files/invoice-input-template.json

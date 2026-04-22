@@ -1,0 +1,104 @@
+{
+  "_description": "Copy-and-edit JSON input templates for each supported document_type. When a user asks for a template, the assistant should return the matching top-level block (qualified_invoice / simplified_invoice / return_invoice) as a json code block, then instruct the user to replace placeholders like <<...>> with their own values.",
+  "qualified_invoice": {
+    "document_type": "qualified_invoice",
+    "document_number": "INV-2026-0421-001",
+    "transaction_date": "<<取引日 YYYY-MM-DD>>",
+    "issue_date": "<<発行日 YYYY-MM-DD>>",
+    "issuer": {
+      "name": "<<貴社名>>",
+      "registration_number": "<<T + 13桁の登録番号>>",
+      "address": "<<貴社住所>>",
+      "contact": "<<電話番号 / メールアドレス>>",
+      "logo": null
+    },
+    "recipient": {
+      "name": "<<取引先名 + 御中>>",
+      "address": "<<取引先住所>>"
+    },
+    "items": [
+      {
+        "description": "<<品目1>>",
+        "quantity": 2,
+        "unit_price": 89800,
+        "tax_rate": 0.1
+      },
+      {
+        "description": "<<品目2 (軽減税率対象)>>",
+        "quantity": 10,
+        "unit_price": 800,
+        "tax_rate": 0.08
+      }
+    ],
+    "price_mode": "tax_excluded",
+    "rounding_method": "floor",
+    "payment": {
+      "due_date": "<<支払期限 YYYY-MM-DD>>",
+      "bank_info": "<<振込先銀行名 + 支店 + 口座種別 + 口座番号 + 口座名義>>"
+    },
+    "notes": "<<備考（任意）>>"
+  },
+  "simplified_invoice": {
+    "document_type": "simplified_invoice",
+    "document_number": "RCP-2026-0421-001",
+    "transaction_date": "<<取引日 YYYY-MM-DD>>",
+    "issue_date": "<<発行日 YYYY-MM-DD>>",
+    "issuer": {
+      "name": "<<店舗名 / 事業者名>>",
+      "registration_number": "<<T + 13桁の登録番号>>",
+      "address": "<<店舗住所>>",
+      "contact": "<<電話番号>>",
+      "logo": null
+    },
+    "items": [
+      {
+        "description": "<<メニュー名 (軽減税率)>>",
+        "quantity": 1,
+        "unit_price": 1200,
+        "tax_rate": 0.08
+      },
+      {
+        "description": "<<ビール / 酒類など (標準税率)>>",
+        "quantity": 2,
+        "unit_price": 600,
+        "tax_rate": 0.1
+      }
+    ],
+    "price_mode": "tax_included",
+    "rounding_method": "floor",
+    "notes": "<<備考（任意）>>"
+  },
+  "return_invoice": {
+    "document_type": "return_invoice",
+    "document_number": "INV-R-2026-0421-001",
+    "transaction_date": "<<返還日 YYYY-MM-DD>>",
+    "issue_date": "<<発行日 YYYY-MM-DD>>",
+    "issuer": {
+      "name": "<<貴社名>>",
+      "registration_number": "<<T + 13桁の登録番号>>",
+      "address": "<<貴社住所>>",
+      "contact": "<<電話番号 / メールアドレス>>",
+      "logo": null
+    },
+    "recipient": {
+      "name": "<<取引先名 + 御中>>",
+      "address": "<<取引先住所>>"
+    },
+    "items": [
+      {
+        "description": "<<返品対象品目>>",
+        "quantity": 1,
+        "unit_price": 89800,
+        "tax_rate": 0.1
+      }
+    ],
+    "price_mode": "tax_excluded",
+    "rounding_method": "floor",
+    "return_info": {
+      "original_document_number": "<<元の適格請求書番号>>",
+      "return_date": "<<返還日 YYYY-MM-DD>>",
+      "reason": "<<返還事由（例: 商品不良による返品、値引き、割戻し等）>>"
+    },
+    "notes": "<<備考（任意）>>"
+  }
+}

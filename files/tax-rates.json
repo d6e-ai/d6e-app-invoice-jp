@@ -1,0 +1,29 @@
+{
+  "description": "Japanese consumption tax (消費税) rate master data for the Invoice System (インボイス制度). This file is bundled with the d6e/invoice-jp app and uploaded to workspace storage at install time.",
+  "rates": {
+    "standard": {
+      "rate": 0.1,
+      "label_ja": "標準税率 10%",
+      "label_en": "Standard rate 10%",
+      "effective_since": "2019-10-01",
+      "applies_to": "一般的な商品・サービス"
+    },
+    "reduced": {
+      "rate": 0.08,
+      "label_ja": "軽減税率 8%",
+      "label_en": "Reduced rate 8%",
+      "effective_since": "2019-10-01",
+      "applies_to": "飲食料品（外食・酒類を除く）、定期購読の新聞"
+    }
+  },
+  "rounding": {
+    "allowed_methods": ["floor", "ceil", "round"],
+    "default": "floor",
+    "rule": "1つの適格請求書につき、税率ごとに1回のみ端数処理を行う。"
+  },
+  "registration_number": {
+    "format": "T + 13 digits",
+    "pattern": "^T\\d{13}$",
+    "example": "T1234567890123"
+  }
+}
