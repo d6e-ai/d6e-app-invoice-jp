@@ -214,7 +214,24 @@ function makeTextCell(text, width, align, extraRuns) {
 
 // --- input + totals --------------------------------------------------------
 
-const payload = $input || {};
+// The d6e JS runtime injects the caller-provided input as the `$input` global.
+// Accept both shapes for resilience — these must stay in lock-step with
+// render-invoice-pdf.js so that workflow calls and direct AI invocations
+// behave identically for both output formats:
+//   1. Direct payload ({ document_type, items, ... }) — produced by the
+//      generate-invoice-docx workflow's input_mappings.
+//   2. Wrapped form ({ normalized_payload: { ... } }) — produced when an AI
+//      agent forwards the full `validate-qualified-invoice` result without
+//      unwrapping.
+let payload = $input && typeof $input === 'object' ? $input : {};
+if (
+  payload.normalized_payload &&
+  typeof payload.normalized_payload === 'object' &&
+  !Array.isArray(payload.normalized_payload)
+) {
+  payload = payload.normalized_payload;
+}
+
 const documentType = payload.document_type || 'qualified_invoice';
 const DOCUMENT_TYPE_META = {
   qualified_invoice: { title: '適格請求書', filePrefix: '適格請求書' },
@@ -729,10 +746,50 @@ const doc = new Document({
 });
 
 const base64 = await Packer.toBase64String(doc);
-const dateForName =
-  typeof payload.transaction_date === 'string'
-    ? payload.transaction_date.replace(/-/g, '')
-    : 'undated';
-const fileName = meta.filePrefix + '_' + dateForName + '.docx';
+const fileName = meta.filePrefix + '_' + buildFileNameSuffix(payload) + '.docx';
 
 return { file_data: base64, file_name: fileName };
+
+// Build the trailing part of the generated file name.
+// Priority: document_number (sanitized) > transaction_date > issue_date > 'undated'.
+// Keep this logic byte-identical with render-invoice-pdf.js so PDF and DOCX
+// downloads always share the same file stem for a given invoice.
+function buildFileNameSuffix(p) {
+  const fromDocNumber = sanitizeForFileName(p && p.document_number);
+  if (fromDocNumber) {
+    return fromDocNumber;
+  }
+  const fromTxDate = ymdCompact(p && p.transaction_date);
+  if (fromTxDate) {
+    return fromTxDate;
+  }
+  const fromIssueDate = ymdCompact(p && p.issue_date);
+  if (fromIssueDate) {
+    return fromIssueDate;
+  }
+  return 'undated';
+}
+
+function sanitizeForFileName(raw) {
+  if (typeof raw !== 'string') {
+    return '';
+  }
+  const replaced = raw.replace(/[\\/:*?"<>|\s\x00-\x1f]/g, '_');
+  const collapsed = replaced.replace(/_+/g, '_');
+  const trimmed = collapsed.replace(/^_+|_+$/g, '');
+  if (trimmed.length === 0) {
+    return '';
+  }
+  return trimmed.length > 80 ? trimmed.slice(0, 80) : trimmed;
+}
+
+function ymdCompact(raw) {
+  if (typeof raw !== 'string') {
+    return '';
+  }
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return '';
+  }
+  return match[1] + match[2] + match[3];
+}

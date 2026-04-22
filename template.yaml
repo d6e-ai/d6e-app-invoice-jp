@@ -13,6 +13,30 @@ template_prompt: |
   - `simplified_invoice`（適格簡易請求書：小売・飲食・タクシー・駐車場・旅行・写真業など）
   - `return_invoice`（適格返還請求書：値引き・返品・割戻しなどで対価を返還した場合）
 
+  ## 帳票生成フロー（最重要）
+
+  ユーザーからの入力 JSON が揃ったら、**個別 STF を手動で連結するのではなく、必ず以下の
+  ワークフローを利用**してください。ワークフロー経由なら validate → render の payload 受け渡しが
+  決定論的に行われるため、PDF / DOCX の中身が空になったり、ファイル名が `undated` に落ちる
+  ケースを避けられます。
+
+  - 両方（PDF + DOCX）欲しい場合の推奨手順:
+    1. まず `validate-qualified-invoice` を単体で 1 回呼び、`valid: false` なら `errors[]` を
+       日本語でユーザーに提示して修正を依頼する。勝手に値を補完して進めてはいけない。
+    2. `valid: true` なら、`generate-invoice-pdf` と `generate-invoice-docx` を**両方**呼ぶ
+       （順不同）。それぞれのワークフローが PDF / DOCX の `{file_data, file_name}` を返す。
+  - PDF だけで良い場合は `generate-invoice-pdf` のみ、DOCX だけで良い場合は
+    `generate-invoice-docx` のみを呼ぶ。
+  - 個別 STF（`render-invoice-pdf` / `render-invoice-docx`）を手動で呼ぶのは、ワークフローが
+    なんらかの理由で利用できない場合のみのフォールバックとする。手動で呼ぶときは必ず
+    `validate-qualified-invoice` の `normalized_payload` を render STF の `$input` に
+    そのまま渡す（部分的に抜き取ったりしない）。
+
+  ワークフロー実行後の戻り値は `{file_data, file_name}` 形式になっており、d6e の UI が
+  自動的にダウンロードリンクとして展開します。AI 側で base64 を貼り付ける必要はありません。
+  代わりに「PDF と DOCX をダウンロード可能な形で生成しました」といった一言と、必要に応じて
+  合計金額のサマリーなど次のアクション提案を添えてください。
+
   ## 利用フローの判別
 
   ユーザーの入力を見て、以下 3 つのモードのうち 1 つを選んでください。
@@ -20,7 +44,7 @@ template_prompt: |
   1. JSON ペーストモード（主運用）
      ユーザーの発言にコードブロックの JSON オブジェクトが含まれている、
      または「この JSON で」「下のデータで作って」と明示された場合。
-     その場合、JSON を そのままの構造で `validate-qualified-invoice` の入力に渡してください。
+     その JSON をそのままワークフローの入力として渡してください。
      不足項目や型不一致があった場合は、勝手に値を創作せず必ずユーザーに確認してください。
   2. テンプレ要求モード
      「雛形」「テンプレート」「入力フォーマット」「サンプル JSON」「どんな形で渡せば良い」
@@ -30,7 +54,8 @@ template_prompt: |
      「この内容をあなたの情報で編集して貼り戻してください」と案内してください。
   3. 対話フォールバックモード
      JSON の貼り付けもテンプレ要求もなく、自然文で依頼された場合。
-     下記「収集すべき項目」を一問一答で聞き、すべて揃ったら JSON にまとめてから次のステップに進みます。
+     下記「収集すべき項目」を一問一答で聞き、すべて揃ったら JSON にまとめてから
+     上記のワークフロー呼び出し手順に進みます。
 
   ## 収集すべき項目（対話フォールバック時の最小セット）
 
@@ -45,25 +70,18 @@ template_prompt: |
   7. （簡易の場合）6 は任意
   8. （返還の場合）返還事由と元の請求書番号（`return_info.reason` / `return_info.original_document_number`）
 
-  任意項目: 会社ロゴ (`issuer.logo`)、支払期限・振込先 (`payment.*`)、備考 (`notes`)、
-  税抜／税込の別 (`price_mode`)、端数処理 (`rounding_method`)。
+  任意項目: 書類番号 (`document_number`)、会社ロゴ (`issuer.logo`)、
+  支払期限・振込先 (`payment.*`)、備考 (`notes`)、税抜／税込の別 (`price_mode`)、
+  端数処理 (`rounding_method`)。
+  **ファイル名には `document_number` が優先的に使われる**ため、書類番号を指定すると
+  `適格請求書_INV-2026-001.pdf` のような分かりやすい名前になります。省略時は取引日、
+  それも無ければ `undated` にフォールバックします。
 
   ## document_type の決め方
 
   - 何も指定されなければ `qualified_invoice`
   - 「レシート」「小売」「飲食店」「タクシー」「駐車場」「旅行」などの文脈なら `simplified_invoice`
   - 「返品」「値引き」「割戻し」「返還」などが出たら `return_invoice`
-
-  ## STF 呼び出しの流れ
-
-  1. 入力が揃ったら、必ず最初に `validate-qualified-invoice` を呼んで記載要件を検証する。
-  2. 結果が `valid: false` なら、`errors[]` の内容をユーザーに日本語で提示し、修正を依頼して
-     もう一度最初から組み直す。勝手に値を補完して再実行してはいけない。
-  3. `valid: true` になったら、`validate-qualified-invoice` が返した `normalized_payload` を使って、
-     `render-invoice-pdf` と `render-invoice-docx` の両方を呼ぶ。ユーザーが明示的に片方だけを
-     希望した場合（「PDF だけで良い」など）のみ、指定された方だけを呼ぶ。
-  4. 生成された `file_data`（base64）と `file_name` は d6e の UI が自動的にダウンロードリンクとして
-     表示するので、AI 側で追加の説明は不要（ただし要約や次のアクションの提案は歓迎）。
 
   ## 出力時のマナー
 
@@ -75,6 +93,12 @@ template_prompt: |
     （想像で答えない）。
 
 stfs:
+  # NOTE: The three STFs below share the same input payload shape. If you change
+  # one input_schema you MUST update the other two to match. They are kept as
+  # verbatim copies here (rather than YAML anchors) because the d6e installer
+  # pipeline does not guarantee anchor expansion survives all re-serialization
+  # stages, and drift would silently break either validation or rendering.
+
   - name: validate-qualified-invoice
     runtime: js
     description: Validates six mandatory fields, registration number format, and computes per-tax-rate totals for a qualified invoice payload.
@@ -184,6 +208,7 @@ stfs:
     runtime: js
     description: Renders a validated invoice payload to an A4 PDF with embedded Japanese font. Returns base64 file_data and file_name.
     source: stfs/render-invoice-pdf.js
+    # Keep this schema synchronized with validate-qualified-invoice above.
     input_schema:
       type: object
       required:
@@ -198,11 +223,116 @@ stfs:
             - qualified_invoice
             - simplified_invoice
             - return_invoice
+        document_number:
+          type: string
+        transaction_date:
+          type: string
+          pattern: "^\\d{4}-\\d{2}-\\d{2}$"
+        issue_date:
+          type: string
+          pattern: "^\\d{4}-\\d{2}-\\d{2}$"
+        issuer:
+          type: object
+          required:
+            - name
+            - registration_number
+          properties:
+            name:
+              type: string
+            registration_number:
+              type: string
+              pattern: "^T\\d{13}$"
+            address:
+              type: string
+            contact:
+              type: string
+            logo:
+              type:
+                - object
+                - "null"
+              properties:
+                format:
+                  type: string
+                  enum: [png, jpg, jpeg]
+                data_base64:
+                  type: string
+        recipient:
+          type: object
+          properties:
+            name:
+              type: string
+            address:
+              type: string
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required:
+              - description
+              - quantity
+              - unit_price
+              - tax_rate
+            properties:
+              description:
+                type: string
+              quantity:
+                type: number
+              unit_price:
+                type: number
+              tax_rate:
+                type: number
+                enum: [0.08, 0.10]
+        price_mode:
+          type: string
+          enum: [tax_excluded, tax_included]
+          default: tax_excluded
+        rounding_method:
+          type: string
+          enum: [floor, ceil, round]
+          default: floor
+        payment:
+          type: object
+          properties:
+            due_date:
+              type: string
+            bank_info:
+              type: string
+        notes:
+          type: string
+        return_info:
+          type: object
+          properties:
+            original_document_number:
+              type: string
+            return_date:
+              type: string
+            reason:
+              type: string
+        totals:
+          type: object
+          description: Pre-computed totals from validate-qualified-invoice. Optional; render STF recomputes if absent.
+          properties:
+            subtotal_8:
+              type: number
+            subtotal_10:
+              type: number
+            subtotal:
+              type: number
+            tax_8:
+              type: number
+            tax_10:
+              type: number
+            tax_total:
+              type: number
+            grand_total:
+              type: number
 
   - name: render-invoice-docx
     runtime: js
     description: Renders a validated invoice payload to a Word (docx) document using MS Gothic. Returns base64 file_data and file_name.
     source: stfs/render-invoice-docx.js
+    # Keep this schema synchronized with validate-qualified-invoice above.
     input_schema:
       type: object
       required:
@@ -217,6 +347,110 @@ stfs:
             - qualified_invoice
             - simplified_invoice
             - return_invoice
+        document_number:
+          type: string
+        transaction_date:
+          type: string
+          pattern: "^\\d{4}-\\d{2}-\\d{2}$"
+        issue_date:
+          type: string
+          pattern: "^\\d{4}-\\d{2}-\\d{2}$"
+        issuer:
+          type: object
+          required:
+            - name
+            - registration_number
+          properties:
+            name:
+              type: string
+            registration_number:
+              type: string
+              pattern: "^T\\d{13}$"
+            address:
+              type: string
+            contact:
+              type: string
+            logo:
+              type:
+                - object
+                - "null"
+              properties:
+                format:
+                  type: string
+                  enum: [png, jpg, jpeg]
+                data_base64:
+                  type: string
+        recipient:
+          type: object
+          properties:
+            name:
+              type: string
+            address:
+              type: string
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required:
+              - description
+              - quantity
+              - unit_price
+              - tax_rate
+            properties:
+              description:
+                type: string
+              quantity:
+                type: number
+              unit_price:
+                type: number
+              tax_rate:
+                type: number
+                enum: [0.08, 0.10]
+        price_mode:
+          type: string
+          enum: [tax_excluded, tax_included]
+          default: tax_excluded
+        rounding_method:
+          type: string
+          enum: [floor, ceil, round]
+          default: floor
+        payment:
+          type: object
+          properties:
+            due_date:
+              type: string
+            bank_info:
+              type: string
+        notes:
+          type: string
+        return_info:
+          type: object
+          properties:
+            original_document_number:
+              type: string
+            return_date:
+              type: string
+            reason:
+              type: string
+        totals:
+          type: object
+          description: Pre-computed totals from validate-qualified-invoice. Optional; render STF recomputes if absent.
+          properties:
+            subtotal_8:
+              type: number
+            subtotal_10:
+              type: number
+            subtotal:
+              type: number
+            tax_8:
+              type: number
+            tax_10:
+              type: number
+            tax_total:
+              type: number
+            grand_total:
+              type: number
 
 files:
   - name: invoice-requirements-guide
@@ -230,3 +464,125 @@ files:
   - name: invoice-input-template
     description: Copy-and-edit JSON input templates for the three document types, containing placeholder values.
     path: files/invoice-input-template.json
+
+workflows:
+  # Two separate workflows because d6e workflow return values are limited to the
+  # last STF output (see packages/api/src/engine/workflow.rs), and the frontend
+  # binary-detection extracts only one file_data per tool result. Exposing one
+  # workflow per output format lets the AI call both when the user wants both.
+
+  - name: generate-invoice-pdf
+    description: Validates the payload and renders the invoice as a PDF in a single deterministic run. Returns { file_data, file_name } for the PDF.
+    stf_steps:
+      - stf_name: validate-qualified-invoice
+        input_mappings:
+          - source: { type: Variable, value: "$input.document_type" }
+            target: document_type
+          - source: { type: Variable, value: "$input.document_number" }
+            target: document_number
+          - source: { type: Variable, value: "$input.transaction_date" }
+            target: transaction_date
+          - source: { type: Variable, value: "$input.issue_date" }
+            target: issue_date
+          - source: { type: Variable, value: "$input.issuer" }
+            target: issuer
+          - source: { type: Variable, value: "$input.recipient" }
+            target: recipient
+          - source: { type: Variable, value: "$input.items" }
+            target: items
+          - source: { type: Variable, value: "$input.price_mode" }
+            target: price_mode
+          - source: { type: Variable, value: "$input.rounding_method" }
+            target: rounding_method
+          - source: { type: Variable, value: "$input.payment" }
+            target: payment
+          - source: { type: Variable, value: "$input.notes" }
+            target: notes
+          - source: { type: Variable, value: "$input.return_info" }
+            target: return_info
+      - stf_name: render-invoice-pdf
+        input_mappings:
+          - source: { type: Variable, value: "$steps[0].normalized_payload.document_type" }
+            target: document_type
+          - source: { type: Variable, value: "$steps[0].normalized_payload.document_number" }
+            target: document_number
+          - source: { type: Variable, value: "$steps[0].normalized_payload.transaction_date" }
+            target: transaction_date
+          - source: { type: Variable, value: "$steps[0].normalized_payload.issue_date" }
+            target: issue_date
+          - source: { type: Variable, value: "$steps[0].normalized_payload.issuer" }
+            target: issuer
+          - source: { type: Variable, value: "$steps[0].normalized_payload.recipient" }
+            target: recipient
+          - source: { type: Variable, value: "$steps[0].normalized_payload.items" }
+            target: items
+          - source: { type: Variable, value: "$steps[0].normalized_payload.price_mode" }
+            target: price_mode
+          - source: { type: Variable, value: "$steps[0].normalized_payload.rounding_method" }
+            target: rounding_method
+          - source: { type: Variable, value: "$steps[0].normalized_payload.payment" }
+            target: payment
+          - source: { type: Variable, value: "$steps[0].normalized_payload.notes" }
+            target: notes
+          - source: { type: Variable, value: "$steps[0].normalized_payload.return_info" }
+            target: return_info
+          - source: { type: Variable, value: "$steps[0].normalized_payload.totals" }
+            target: totals
+
+  - name: generate-invoice-docx
+    description: Validates the payload and renders the invoice as a Word (docx) document in a single deterministic run. Returns { file_data, file_name } for the DOCX.
+    stf_steps:
+      - stf_name: validate-qualified-invoice
+        input_mappings:
+          - source: { type: Variable, value: "$input.document_type" }
+            target: document_type
+          - source: { type: Variable, value: "$input.document_number" }
+            target: document_number
+          - source: { type: Variable, value: "$input.transaction_date" }
+            target: transaction_date
+          - source: { type: Variable, value: "$input.issue_date" }
+            target: issue_date
+          - source: { type: Variable, value: "$input.issuer" }
+            target: issuer
+          - source: { type: Variable, value: "$input.recipient" }
+            target: recipient
+          - source: { type: Variable, value: "$input.items" }
+            target: items
+          - source: { type: Variable, value: "$input.price_mode" }
+            target: price_mode
+          - source: { type: Variable, value: "$input.rounding_method" }
+            target: rounding_method
+          - source: { type: Variable, value: "$input.payment" }
+            target: payment
+          - source: { type: Variable, value: "$input.notes" }
+            target: notes
+          - source: { type: Variable, value: "$input.return_info" }
+            target: return_info
+      - stf_name: render-invoice-docx
+        input_mappings:
+          - source: { type: Variable, value: "$steps[0].normalized_payload.document_type" }
+            target: document_type
+          - source: { type: Variable, value: "$steps[0].normalized_payload.document_number" }
+            target: document_number
+          - source: { type: Variable, value: "$steps[0].normalized_payload.transaction_date" }
+            target: transaction_date
+          - source: { type: Variable, value: "$steps[0].normalized_payload.issue_date" }
+            target: issue_date
+          - source: { type: Variable, value: "$steps[0].normalized_payload.issuer" }
+            target: issuer
+          - source: { type: Variable, value: "$steps[0].normalized_payload.recipient" }
+            target: recipient
+          - source: { type: Variable, value: "$steps[0].normalized_payload.items" }
+            target: items
+          - source: { type: Variable, value: "$steps[0].normalized_payload.price_mode" }
+            target: price_mode
+          - source: { type: Variable, value: "$steps[0].normalized_payload.rounding_method" }
+            target: rounding_method
+          - source: { type: Variable, value: "$steps[0].normalized_payload.payment" }
+            target: payment
+          - source: { type: Variable, value: "$steps[0].normalized_payload.notes" }
+            target: notes
+          - source: { type: Variable, value: "$steps[0].normalized_payload.return_info" }
+            target: return_info
+          - source: { type: Variable, value: "$steps[0].normalized_payload.totals" }
+            target: totals
