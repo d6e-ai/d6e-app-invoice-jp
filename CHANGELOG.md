@@ -58,3 +58,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `template_prompt` now instructs the AI to prefer the new workflows
   over manually chaining the three STFs. Manual chaining remains
   available as a fallback for partial runs (e.g. validation only).
+- `template_prompt` gained a dedicated "ツール呼び出しの基本規律"
+  section that spells out the UUID-first calling convention for
+  `d6e_execute_workflow` and `d6e_instant_run_stf`. It explicitly
+  instructs the AI to (1) resolve workflow and STF identifiers via
+  `d6e_list_workflows` / `d6e_list_stfs` before execution,
+  (2) account for the `d6e/invoice-jp/` namespace prefix applied by
+  the app installer, and (3) abandon self-retry after two identical
+  JSON-RPC `-32602` failures. This mitigates the observed failure
+  mode where the Slack-side request "適格請求書のサンプルを作成して"
+  timed out after 49 consecutive `Must specify either code (with
+  runtime) or stf_id/stf_version_id` errors caused by the AI agent
+  passing resource names into UUID-required fields.
