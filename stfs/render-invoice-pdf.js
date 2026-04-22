@@ -197,7 +197,7 @@ if (
 ) {
   try {
     const bytes = base64ToUint8Array(issuer.logo.data_base64);
-    const fmt = (issuer.logo.format || '').toLowerCase();
+    const fmt = (issuer.logo.format || 'png').toLowerCase();
     const image =
       fmt === 'png'
         ? await pdfDoc.embedPng(bytes)
