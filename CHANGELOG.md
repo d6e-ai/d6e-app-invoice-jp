@@ -19,3 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - STF `render-invoice-docx` for Word document generation with MS Gothic font.
 - Optional issuer logo embedding (PNG / JPEG via base64) for both PDF and DOCX.
 - Reference files: requirements guide, tax rate master, and input JSON template.
+
+### Fixed
+
+- `render-invoice-docx` STF now uses an explicit
+  `import { ... } from '@d6e-ai/docx';` statement instead of bare
+  `const { ... } = docx;`. The d6e QuickJS runtime only injects
+  `@d6e-ai/*` libraries when it sees a literal `import` statement in
+  the STF source, so the previous form failed at execution time with a
+  `docx is not defined` error.

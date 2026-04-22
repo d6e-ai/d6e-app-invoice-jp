@@ -7,8 +7,17 @@
 // payment terms, and notes.
 //
 // Return: { file_data: <base64>, file_name: <string> }
+//
+// Important: the d6e QuickJS runtime injects @d6e-ai libraries only when
+// it sees a literal `import ... from "@d6e-ai/<lib>"` statement in the STF
+// source. Referencing `docx` through `const { ... } = docx;` without an
+// import statement leaves the library unloaded and results in a
+// 'docx is not defined' error at execution time. The explicit named import
+// below is required; the runtime rewrites it to
+// `const { ... } = globalThis.docx;` internally so downstream code is
+// unchanged.
 
-const {
+import {
   Document,
   Packer,
   Paragraph,
@@ -26,7 +35,7 @@ const {
   VerticalAlign,
   PageNumber,
   HeadingLevel,
-} = docx;
+} from '@d6e-ai/docx';
 
 // --- helpers ---------------------------------------------------------------
 
